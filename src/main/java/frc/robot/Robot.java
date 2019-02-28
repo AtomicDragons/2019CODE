@@ -62,6 +62,9 @@ import edu.wpi.first.wpilibj.AnalogInput;
 public class Robot extends TimedRobot {
 
 
+  Boolean armIsFront;
+  Boolean armIsBack;
+  Boolean oldArmIsBack;
   CasseroleRIOLoadMonitor loadMon;
   
   static final int BAUD_RATE = 115200;
@@ -79,12 +82,17 @@ public class Robot extends TimedRobot {
    * This function is run when the robot is first started up and should be
    * used for any initialization code.
    */
-  WPI_TalonSRX frontLeft;
+  WPI_VictorSPX frontLeft;
 	WPI_VictorSPX backRight;
 	WPI_TalonSRX frontRight;
   WPI_TalonSRX backLeft;
-  WPI_TalonSRX wheel;
   WPI_TalonSRX arm;
+  WPI_TalonSRX ball;
+  Spark wheel1;
+  Spark wheel2;
+
+  Spark scissorOne;
+  Spark scissorTwo;
 
   JeVoisInterface cam;
 
@@ -92,7 +100,8 @@ public class Robot extends TimedRobot {
   MjpegServer camServer;
   
 	SpeedControllerGroup leftMotors;
-	SpeedControllerGroup rightMotors;
+  SpeedControllerGroup rightMotors;
+  SpeedControllerGroup wheelMotors;
 	
   DifferentialDrive drive;
 	
@@ -110,12 +119,24 @@ public class Robot extends TimedRobot {
   double ultraLeftDistance;
   
   Compressor compressor;
-  DoubleSolenoid frontSully;
-  DoubleSolenoid backSully;
-
+  DoubleSolenoid frontScissorSully;
+  DoubleSolenoid backScissorSully;
+  DoubleSolenoid wheelSully;
+  DoubleSolenoid hatchSully;
+  
+  DigitalInput frontLimitSwitch;
+  DigitalInput backLimitSwitch;
+  
   Relay relay;
 
   Encoder armEncoder;
+  static final int encoderNoMore = 1;
+  static final int encoderBack = 2;
+  static final int targetEncoder = 3;
+
+  //used for hatch code later! woo_hoo! :)
+  boolean hatchController = true;
+  boolean hatchStatus = true;
 
   ScheduledExecutorService scheduler;
 
@@ -125,12 +146,13 @@ public class Robot extends TimedRobot {
   @Override
   public void robotInit() {
 
+    armIsFront = true;
+    armIsBack = false;
+
     CameraServer.getInstance().startAutomaticCapture();
     
     cam = new JeVoisInterface(true);
     loadMon = new CasseroleRIOLoadMonitor();
-
-   
 
     m_chooser.setDefaultOption("Default Auto", kDefaultAuto);
     m_chooser.addOption("My Auto", kCustomAuto);
@@ -139,16 +161,21 @@ public class Robot extends TimedRobot {
     RobotMap map = new RobotMap();
 
 		backRight = new WPI_VictorSPX(map.FRONT_RIGHT_MOTOR_PORT);
-    frontLeft = new WPI_TalonSRX(map.FRONT_LEFT_MOTOR_PORT);
+    frontLeft = new WPI_VictorSPX(map.FRONT_LEFT_MOTOR_PORT);
 		frontRight = new WPI_TalonSRX(map.BACK_RIGHT_MOTOR_PORT);
     backLeft = new WPI_TalonSRX(map.BACK_LEFT_MOTOR_PORT);
-    wheel = new WPI_TalonSRX(map.SCISSOR_WHEEL_MOTOR_PORT);
+    wheel1 = new Spark(map.SCISSOR_WHEEL_ONE_MOTOR_PORT);
+    wheel2 = new Spark(map.SCISSOR_WHEEL_TWO_MOTOR_PORT);
     arm = new WPI_TalonSRX(map.ARM_MOTOR_PORT);
-  
+    ball = new WPI_TalonSRX(map.SHOOTY_WHEEL_MOTOR_PORT);
 
 		leftMotors = new SpeedControllerGroup (frontLeft, backLeft);
-		backRight.setInverted(true);
-		rightMotors = new SpeedControllerGroup (backRight, frontRight);
+    frontRight.setInverted(false);
+    backRight.setInverted(true);
+    frontLeft.setInverted(true);
+    backLeft.setInverted(true);
+    rightMotors = new SpeedControllerGroup (backRight, frontRight);
+    wheelMotors = new SpeedControllerGroup(wheel1, wheel2);
 		
 		drive = new DifferentialDrive (leftMotors, rightMotors);
 		drive.setSafetyEnabled(false);
@@ -160,60 +187,42 @@ public class Robot extends TimedRobot {
     ultraLeft = new AnalogInput(map.ULTRA_LEFT_PORT);
 
     compressor = new Compressor(0);
-    frontSully = new DoubleSolenoid(map.FRONT_SULLY_PORT, map.FRONT_SULLY_PORT + 1);
-    backSully = new DoubleSolenoid(map.BACK_SULLY_PORT, map.BACK_SULLY_PORT + 1);
-
+    frontScissorSully = new DoubleSolenoid(0, map.FRONT_SULLY_PORT, map.FRONT_SULLY_PORT + 1);
+    backScissorSully = new DoubleSolenoid(0, map.BACK_SULLY_PORT, map.BACK_SULLY_PORT + 1);
+    hatchSully = new DoubleSolenoid(1, map.HATCH_SULLY_PORT, map.HATCH_SULLY_PORT + 1);
+   
     relay = new Relay(3);
     relay.set(Relay.Value.kForward);
 
-    //armEncoder = new Encoder(0, 1, false,Encoder.EncodingType.k4X);
+    /*
+    armEncoder = new Encoder(0, 1, false,Encoder.EncodingType.k4X);
+    */
+    frontLimitSwitch = new DigitalInput(map.FRONT_LIMIT_SWITCH_PORT);
+    backLimitSwitch = new DigitalInput(map.BACK_LIMIT_SWITCH_PORT);
+  
     
   }
 
-  /**
-   * This function is called every robot packet, no matter the mode. Use
-   * this for items like diagnostics that you want ran during disabled,
-   * autonomous, teleoperated and test.
-   *
-   * <p>This runs after the mode specific periodic functions, but before
-   * LiveWindow and SmartDashboard integrated updating.
-   */
   @Override
   public void robotPeriodic() {
   }
   @Override
   public void disabledPeriodic() {
-      System.out.print("s");
-      System.out.println(cam.getPacketRxRate_PPS());
-      System.out.print("r");
-      System.out.println(loadMon.getCPULoadPct());
+    //unused
+     
 
   }
-  /**
-   * This autonomous (along with the chooser code above) shows how to select
-   * between different autonomous modes using the dashboard. The sendable
-   * chooser code works with the Java SmartDashboard. If you prefer the
-   * LabVIEW Dashboard, remove all of the chooser code and uncomment the
-   * getString line to get the auto name from the text box below the Gyro
-   *
-   * <p>You can add additional auto modes by adding additional comparisons to
-   * the switch structure below with additional strings. If using the
-   * SendableChooser make sure to add them to the chooser code above as well.
-   */
+
   @Override
   public void autonomousInit() {
     m_autoSelected = m_chooser.getSelected();
-    // autoSelected = SmartDashboard.getString("Auto Selector",
-    // defaultAuto);
     System.out.println("Auto selected: " + m_autoSelected);
 
   }
 
-  /**
-   * This function is called periodically during autonomous.
-   */
   @Override
   public void autonomousPeriodic() {
+    //unused
     switch (m_autoSelected) {
       case kCustomAuto:
         // Put custom auto code here
@@ -226,18 +235,17 @@ public class Robot extends TimedRobot {
   }
   @Override
   public void teleopInit() {
-    
+    //unused, for vision
+    /*
     if (visionPort == null) return;
     System.out.println("pinging JeVois");
     String cmd = "ping";
     int bytes = visionPort.writeString(cmd);
     System.out.println("wrote " +  bytes + "/" + cmd.length() + " bytes, cmd: " + cmd);
+    */
     
 }
   
-  /**
-   * This function is called periodically during operator control.
-   */
   @Override
   public void teleopPeriodic() {
     /*
@@ -257,6 +265,7 @@ public class Robot extends TimedRobot {
     ultraLeftDistance = (ultraLeftVoltage * 41.6667) - .8333;
     ultraRightDistance = (ultraRightVoltage * 41.6667) - .8333;
    
+    //TODO: check if works in init
     compressor.setClosedLoopControl(true);
   
     SmartDashboard.putNumber("ultraRight Voltage",ultraRightVoltage);
@@ -265,9 +274,8 @@ public class Robot extends TimedRobot {
     SmartDashboard.putNumber("ultraLeft Voltage",ultraLeftVoltage);
     SmartDashboard.putNumber("ultraLeft Distance",ultraLeftDistance);
 
-    if (driveStick.getRawButton(1)) {
-
-
+    //ultrasonic sensor movement
+    if (driveStick.getRawButton(ControlsMap.DRIVE_STICK_ALLIGN)) {
       if (ultraLeftDistance > ultraRightDistance){
         drive.tankDrive(1 * 0.5f, ultraRightDistance / ultraLeftDistance * 0.5f);
       }
@@ -276,79 +284,179 @@ public class Robot extends TimedRobot {
       }
     }
     else{
-      drive.tankDrive(-1 * driveStick.getRawAxis(1) * 0.5f, -1 * driveStick.getRawAxis(5) * 0.5f, true);
+      drive.tankDrive(-1 * driveStick.getRawAxis(ControlsMap.DRIVE_STICK_ALLIGN) * 0.5f, -1 * driveStick.getRawAxis(5) * 0.5f, true);
     }
     
 
-    
-    if (driveStick.getRawButton(2)){
+    //speed limiter
+    if (driveStick.getRawButton(ControlsMap.DRIVE_STICK_CHANGE_SPEED_MULTIPLIER)){
       SPEED_MULTIPLIER = 1;
     }
     else {
       SPEED_MULTIPLIER = .6;
     }
-
-    
-    if (driveStick.getRawAxis(4) > .1){ 
-      if (driveStick.getRawAxis(0) > .1){
-        drive.tankDrive(driveStick.getRawAxis(4) * SPEED_MULTIPLIER, driveStick.getRawAxis(4)*(1-driveStick.getRawAxis(0)) * SPEED_MULTIPLIER);
+    /*
+    //GTA Drive (GTA = Grand Theft Auto, for dumb peoplelike MATEO PARRADO who don't know)
+    if (driveStick.getRawAxis(ControlsMap.DRIVE_STICK_FORWARDS) > .1){ 
+      // right
+      if (driveStick.getRawAxis(ControlsMap.DRIVE_STICK_STEERING) > .1){
+        drive.tankDrive(driveStick.getRawAxis(ControlsMap.DRIVE_STICK_FORWARDS) * SPEED_MULTIPLIER, driveStick.getRawAxis(ControlsMap.DRIVE_STICK_FORWARDS)*(1-driveStick.getRawAxis(ControlsMap.DRIVE_STICK_STEERING)) * SPEED_MULTIPLIER);
       }
-      else if (driveStick.getRawAxis(0) < -.1) {
-        drive.tankDrive (driveStick.getRawAxis(4) * (1+driveStick.getRawAxis(0)) * SPEED_MULTIPLIER, driveStick.getRawAxis(4) * SPEED_MULTIPLIER);
+      // left
+      else if (driveStick.getRawAxis(ControlsMap.DRIVE_STICK_STEERING) < -.1) {
+        drive.tankDrive (driveStick.getRawAxis(ControlsMap.DRIVE_STICK_FORWARDS) * (1+driveStick.getRawAxis(ControlsMap.DRIVE_STICK_STEERING)) * SPEED_MULTIPLIER, driveStick.getRawAxis(ControlsMap.DRIVE_STICK_FORWARDS) * SPEED_MULTIPLIER);
       }
+      // straight
       else{
         drive.tankDrive(1,1);
       }
-
     }
-    else if (driveStick.getRawAxis(3) > .1) {
-      if (driveStick.getRawAxis(0) > .1){
-        drive.tankDrive(-driveStick.getRawAxis(3) * SPEED_MULTIPLIER, -driveStick.getRawAxis(3)*(1-driveStick.getRawAxis(0)) * SPEED_MULTIPLIER);
+    //backwards
+    else if (driveStick.getRawAxis(ControlsMap.DRIVE_STICK_BACKWARDS) > .1) {
+      // right
+      if (driveStick.getRawAxis(ControlsMap.DRIVE_STICK_STEERING) > .1){
+        drive.tankDrive(-driveStick.getRawAxis(ControlsMap.DRIVE_STICK_BACKWARDS) * SPEED_MULTIPLIER, -driveStick.getRawAxis(ControlsMap.DRIVE_STICK_BACKWARDS)*(1-driveStick.getRawAxis(ControlsMap.DRIVE_STICK_STEERING)) * SPEED_MULTIPLIER);
+      }
+      // left
+      else if (driveStick.getRawAxis (0) < -.1) {
+        drive.tankDrive(-driveStick.getRawAxis(ControlsMap.DRIVE_STICK_BACKWARDS) * (1+driveStick.getRawAxis(ControlsMap.DRIVE_STICK_STEERING)) * SPEED_MULTIPLIER, -driveStick.getRawAxis(ControlsMap.DRIVE_STICK_BACKWARDS) * SPEED_MULTIPLIER);
+      }
+      // straight
+      else {
+        drive.tankDrive(-1,-1);
+      }
     }
-    else if (driveStick.getRawAxis (0) < -.1) {
-      drive.tankDrive(-driveStick.getRawAxis(3) * (1+driveStick.getRawAxis(0)) * SPEED_MULTIPLIER, -driveStick.getRawAxis(3) * SPEED_MULTIPLIER);
-    }
-    else {
-      drive.tankDrive(-1,-1);
-    }
-  }
+    // break if no button is pressed
     else{
       drive.tankDrive(0, 0);
+      
     }
-
+    */
+    if(driveStick.getRawAxis(4) > .1){
+      drive.curvatureDrive(driveStick.getRawAxis(4), driveStick.getRawAxis(0), false);
+    }
+    else if(driveStick.getRawAxis(3) > .1){
+      drive.curvatureDrive(-driveStick.getRawAxis(3), driveStick.getRawAxis(0), false);
+    }
+    else{
+      drive.curvatureDrive(0, driveStick.getRawAxis(0), true);
+    }
+    //drive.tankDrive(driveStick.getRawAxis(1), driveStick.getRawAxis(5));
     //drive.tankDrive(1, 1);
 
     //controls the back scissor lift wheel  motor 
-    if (opStick.getRawButton(1)){
-      wheel.set(1);
+   
+    if (opStick.getRawButton(ControlsMap.OP_STICK_MOVE_SCISSOR_WHEELS)){
+      wheelMotors.set(1);
     }
     else {
-      wheel.set(0);
-    }
- 
-
-    //pneumatics
-    if(opStick.getRawButton(9)){
-      frontSully.set(DoubleSolenoid.Value.kForward);
-      backSully.set(DoubleSolenoid.Value.kForward);
-    }
-    else if (opStick.getRawButton(11)){
-      frontSully.set(DoubleSolenoid.Value.kReverse);
-    }
-    else if (opStick.getRawButton(10)){
-      backSully.set(DoubleSolenoid.Value.kReverse);
-    }
-
-  
-    if(opStick.getRawButton(2)){
-      arm.set(1);
-      /*
-      //for if we use timer which will prolly not happen
-      scheduler = Executors.newScheduledThreadPool(1);
-      scheduler.scheduleAtFixedRate(()->{arm.set(0);}, 0, 1 * 1000, TimeUnit.MILLISECONDS);
-      */
+      wheelMotors.set(0);
     }
     
+
+    //if scissor lift is dropped, shoot both forwards
+    if(opStick.getRawButton(ControlsMap.OP_STICK_LOWER_SCISSOR_LIFT)){
+      frontScissorSully.set(DoubleSolenoid.Value.kForward);
+      backScissorSully.set(DoubleSolenoid.Value.kForward);
+    }//raise first piston
+    else if (opStick.getRawButton(ControlsMap.OP_STICK_RAISE_FRONT_SCISSOR)){
+      frontScissorSully.set(DoubleSolenoid.Value.kReverse);
+    }//raise second piston
+    else if (opStick.getRawButton(ControlsMap.OP_STICK_RAISE_BACK_SCISSOR)){
+      backScissorSully.set(DoubleSolenoid.Value.kReverse);
+    }
+    
+    // controls hatch moving in and out with just one button
+    if (opStick.getRawButton(ControlsMap.OP_STICK_ARM_PISTON) && hatchStatus){
+      hatchController = !hatchController;
+      hatchStatus = false;
+      if (hatchController == true){
+        hatchSully.set(DoubleSolenoid.Value.kForward);
+      }
+      else if (hatchController == false){
+        hatchSully.set(DoubleSolenoid.Value.kReverse);
+      }
+    }
+    else if(!opStick.getRawButton(ControlsMap.OP_STICK_ARM_PISTON)){
+      hatchStatus = true;
+      hatchSully.set(DoubleSolenoid.Value.kOff);
+    }
+
+    //intake and release balls
+    if(opStick.getRawButton(ControlsMap.OP_STICK_SHOOTY_WHEEL_INTAKE)){
+      ball.set(1);
+    }
+    else if(opStick.getRawButton(ControlsMap.OP_STICK_SHOOTY_WHEEL_OUTTAKE)){
+      ball.set(-1);
+
+    }
+    else{
+      ball.set(0);
+    }
+
+  // move arm forwards or backwards
+  if ((opStick.getRawAxis(ControlsMap.OP_STICK_ARM)) > .1 || ((opStick.getRawAxis(ControlsMap.OP_STICK_ARM)) < -0.1 )){
+      arm.set(opStick.getRawAxis(ControlsMap.OP_STICK_ARM));
+  }
+  else{
+    arm.set(0);
+  }
+
+  if(opStick.getRawButton(ControlsMap.OP_STICK_MOVE_SCISSOR_WHEELS)){
+    scissorOne.set(1);
+    scissorTwo.set(1);
+  }
+  /*
+    if(opStick.getRawButton(ControlsMap.OP_STICK_MOVE_ARM_FOR_HATCH)){
+      //BACKWARDS
+      if(armIsBack){
+        if(armEncoder.get() > -encoderNoMore){
+          arm.set(-1);
+        }
+        else if(armEncoder.get() > -encoderBack){
+          arm.set(0);
+        }
+        else{
+          arm.set(0.5);
+        }
+      }
+      //FORWARDS
+      else{
+        if(armEncoder.get() < encoderNoMore){
+          arm.set(1);
+        }
+        else if(armEncoder.get() < encoderBack){
+          arm.set(0);
+        }
+        else{
+          arm.set(-0.5);
+        }
+      }
+    }
+
+    if(opStick.getRawButton(ControlsMap.OP_STICK_MOVE_ARM_FOR_BALL)){
+      if(armIsFront){
+        if(armEncoder.get() < encoderNoMore){
+          arm.set(1);
+        }
+        else if(armEncoder.get() < encoderBack){
+          arm.set(0);
+        }
+        else{
+          arm.set(-0.5);
+        }
+      }
+      else{
+          if(armEncoder.get() < targetEncoder){
+            arm.set(-0.2);
+          }
+          else{
+            arm.set(0);
+          }
+        }
+    }
+   
+  
     System.out.println("==============+++==============");
     System.out.print("Vision Online: ");
     System.out.println(cam.isVisionOnline());
@@ -363,7 +471,23 @@ public class Robot extends TimedRobot {
     System.out.print("JeVois Framerate: ");
     System.out.println(cam.getJeVoisFramerate_FPS());
     System.out.print("JeVois CPU Load: ");
-    
+    //for if front limit switch is hit
+    if(frontLimitSwitch.get()){
+      armIsFront = true;
+      armIsBack = false;
+      armEncoder.reset();
+    }
+
+    */
+    //for if back limit switch is hit
+
+    /*
+    if(backLimitSwitch.get()){
+      armIsBack = true;
+      armIsFront = false;
+      armEncoder.reset();
+    }
+    */
   }
 
   /**
@@ -371,6 +495,24 @@ public class Robot extends TimedRobot {
    */
   @Override
   public void testPeriodic() {
-
+  }
+  //sets arm to flat position
+  public void resetArm(){
+    if(armIsFront){
+      if(armEncoder.get() < encoderBack){
+        arm.set(0);
+      }
+      else{
+        arm.set(-0.5);
+      }
+    }
+    else{
+      if(armEncoder.get() > -encoderBack){
+        arm.set(0);
+      }
+      else{
+        arm.set(0.5);
+      }
+    }
   }
 }
