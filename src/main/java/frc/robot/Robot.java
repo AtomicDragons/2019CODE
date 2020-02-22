@@ -23,6 +23,7 @@ import com.kauailabs.navx.frc.AHRS;
 import edu.wpi.first.wpilibj.Compressor;
 import edu.wpi.cscore.MjpegServer;
 import edu.wpi.cscore.UsbCamera;
+import edu.wpi.cscore.VideoSource;
 import edu.wpi.first.cameraserver.CameraServer;
 import edu.wpi.first.wpilibj.DigitalInput;
 import edu.wpi.first.wpilibj.DoubleSolenoid;
@@ -59,9 +60,10 @@ import edu.wpi.first.wpilibj.AnalogInput;
  * creating this project, you must also update the build.gradle file in the
  * project.
  */
-public class Robot extends TimedRobot {
+public class Robot extends IterativeRobot {
 
-
+  private static final String kTankMode = "Tank Driving Mode";
+  private static final String kGTAMode = "GTA Driving Mode";
   Boolean armIsFront;
   Boolean armIsBack;
   Boolean oldArmIsBack;
@@ -75,8 +77,8 @@ public class Robot extends TimedRobot {
   
   private static final String kDefaultAuto = "Default";
   private static final String kCustomAuto = "My Auto";
-  private String m_autoSelected;
-  private final SendableChooser<String> m_chooser = new SendableChooser<>();
+  private String m_driveSelected;
+  private final SendableChooser<String> m_driveChooser = new SendableChooser<>();
 
   /**
    * This function is run when the robot is first started up and should be
@@ -84,7 +86,7 @@ public class Robot extends TimedRobot {
    */
   WPI_VictorSPX frontLeft;
 	WPI_VictorSPX backRight;
-	WPI_TalonSRX frontRight;
+	WPI_VictorSPX frontRight;
   WPI_TalonSRX backLeft;
   WPI_TalonSRX arm;
   WPI_TalonSRX ball;
@@ -94,10 +96,13 @@ public class Robot extends TimedRobot {
   Spark scissorOne;
   Spark scissorTwo;
 
-  JeVoisInterface cam;
+  CameraServer frontCam, backCam;
+  VideoSource frontUsbCam, backUsbCam;
 
-  UsbCamera visionCam;
-  MjpegServer camServer;
+  //JeVoisInterface cam;
+
+  //UsbCamera visionCam;
+  //MjpegServer camServer;
   
 	SpeedControllerGroup leftMotors;
   SpeedControllerGroup rightMotors;
@@ -124,8 +129,8 @@ public class Robot extends TimedRobot {
   DoubleSolenoid wheelSully;
   DoubleSolenoid hatchSully;
   
-  DigitalInput frontLimitSwitch;
-  DigitalInput backLimitSwitch;
+  //DigitalInput frontLimitSwitch;
+  //DigitalInput backLimitSwitch;
   
   Relay relay;
 
@@ -137,11 +142,14 @@ public class Robot extends TimedRobot {
   //used for hatch code later! woo_hoo! :)
   boolean hatchController = true;
   boolean hatchStatus = true;
+  boolean hasHatch = false;
 
   ScheduledExecutorService scheduler;
 
   final double PULSE_CONVERSION = .27692308;
-  double SPEED_MULTIPLIER = .6;
+  public double SPEED_MULTIPLIER = 1;
+  public int LEFT_SIGN_MULTIPLIER;
+  public int RIGHT_SIGN_MULTIPLIER;
 
   @Override
   public void robotInit() {
@@ -149,20 +157,32 @@ public class Robot extends TimedRobot {
     armIsFront = true;
     armIsBack = false;
 
-    CameraServer.getInstance().startAutomaticCapture();
+    frontCam = CameraServer.getInstance();
+    frontUsbCam = frontCam.startAutomaticCapture("frontCam",1);
+    //frontUsbCam.setFPS(10);
+    //frontUsbCam.setResolution(150, 100); 
+    //usbCam1.setResolution(100, 100);
+    //usbCam1.setFPS(15);
+    backCam = CameraServer.getInstance();
+    backUsbCam = backCam.startAutomaticCapture("backCam",0);
+    //backUsbCam.setFPS(10);
+    //backUsbCam.setResolution(150, 100);
+   
+    //usbCam2.setResolution(100, 100);
+    //usbCam2.setFPS(15);
     
-    cam = new JeVoisInterface(true);
-    loadMon = new CasseroleRIOLoadMonitor();
+    //cam = new JeVoisInterface(true);
+    //loadMon = new CasseroleRIOLoadMonitor();
 
-    m_chooser.setDefaultOption("Default Auto", kDefaultAuto);
-    m_chooser.addOption("My Auto", kCustomAuto);
-    SmartDashboard.putData("Auto choices", m_chooser);
+    m_driveChooser.setDefaultOption("Tank Drive", kTankMode);
+    m_driveChooser.addOption("GTA Drive", kGTAMode);
+    SmartDashboard.putData("Drive choices", m_driveChooser);
 
     RobotMap map = new RobotMap();
 
-		backRight = new WPI_VictorSPX(map.FRONT_RIGHT_MOTOR_PORT);
+		backRight = new WPI_VictorSPX(map.BACK_RIGHT_MOTOR_PORT);
     frontLeft = new WPI_VictorSPX(map.FRONT_LEFT_MOTOR_PORT);
-		frontRight = new WPI_TalonSRX(map.BACK_RIGHT_MOTOR_PORT);
+		frontRight = new WPI_VictorSPX(map.FRONT_RIGHT_MOTOR_PORT);
     backLeft = new WPI_TalonSRX(map.BACK_LEFT_MOTOR_PORT);
     wheel1 = new Spark(map.SCISSOR_WHEEL_ONE_MOTOR_PORT);
     wheel2 = new Spark(map.SCISSOR_WHEEL_TWO_MOTOR_PORT);
@@ -170,15 +190,11 @@ public class Robot extends TimedRobot {
     ball = new WPI_TalonSRX(map.SHOOTY_WHEEL_MOTOR_PORT);
 
 		leftMotors = new SpeedControllerGroup (frontLeft, backLeft);
-    frontRight.setInverted(false);
-    backRight.setInverted(true);
-    frontLeft.setInverted(true);
-    backLeft.setInverted(true);
-    rightMotors = new SpeedControllerGroup (backRight, frontRight);
+    rightMotors = new SpeedControllerGroup (frontRight, backRight);
     wheelMotors = new SpeedControllerGroup(wheel1, wheel2);
 		
 		drive = new DifferentialDrive (leftMotors, rightMotors);
-		drive.setSafetyEnabled(false);
+		drive.setSafetyEnabled(false);    
 
     driveStick = new Joystick(map.DRIVESTICK_PORT);
     opStick = new Joystick(map.OPSTICK_PORT);
@@ -186,19 +202,19 @@ public class Robot extends TimedRobot {
     ultraRight = new AnalogInput(map.ULTRA_RIGHT_PORT);
     ultraLeft = new AnalogInput(map.ULTRA_LEFT_PORT);
 
-    compressor = new Compressor(0);
-    frontScissorSully = new DoubleSolenoid(0, map.FRONT_SULLY_PORT, map.FRONT_SULLY_PORT + 1);
-    backScissorSully = new DoubleSolenoid(0, map.BACK_SULLY_PORT, map.BACK_SULLY_PORT + 1);
-    hatchSully = new DoubleSolenoid(1, map.HATCH_SULLY_PORT, map.HATCH_SULLY_PORT + 1);
+    compressor = new Compressor(10);
+    frontScissorSully = new DoubleSolenoid(10, map.FRONT_SULLY_PORT, map.FRONT_SULLY_PORT + 1);
+    backScissorSully = new DoubleSolenoid(10, map.BACK_SULLY_PORT, map.BACK_SULLY_PORT + 1);
+    hatchSully = new DoubleSolenoid(0, map.HATCH_SULLY_PORT, map.HATCH_SULLY_PORT + 1);
    
-    relay = new Relay(3);
+    relay = new Relay(1);
     relay.set(Relay.Value.kForward);
 
     /*
     armEncoder = new Encoder(0, 1, false,Encoder.EncodingType.k4X);
     */
-    frontLimitSwitch = new DigitalInput(map.FRONT_LIMIT_SWITCH_PORT);
-    backLimitSwitch = new DigitalInput(map.BACK_LIMIT_SWITCH_PORT);
+    //frontLimitSwitch = new DigitalInput(map.FRONT_LIMIT_SWITCH_PORT);
+    //backLimitSwitch = new DigitalInput(map.BACK_LIMIT_SWITCH_PORT);
   
     
   }
@@ -215,14 +231,124 @@ public class Robot extends TimedRobot {
 
   @Override
   public void autonomousInit() {
-    m_autoSelected = m_chooser.getSelected();
-    System.out.println("Auto selected: " + m_autoSelected);
+    m_driveSelected = m_driveChooser.getSelected();
+    
 
   }
 
   @Override
   public void autonomousPeriodic() {
+    try{
+
+      if(driveStick.getRawAxis(1)<0){
+        LEFT_SIGN_MULTIPLIER = 1;
+      }
+      else{
+        LEFT_SIGN_MULTIPLIER = -1;
+      }
+
+      if(driveStick.getRawAxis(5)<0){
+        RIGHT_SIGN_MULTIPLIER = 1;
+      }
+      else{
+        RIGHT_SIGN_MULTIPLIER = -1;
+      }
+
+      drive.tankDrive(Math.pow((driveStick.getRawAxis(1)),4) * SPEED_MULTIPLIER * LEFT_SIGN_MULTIPLIER, Math.pow((driveStick.getRawAxis(5)),4)  * SPEED_MULTIPLIER * RIGHT_SIGN_MULTIPLIER);
+
+      if (driveStick.getRawAxis(ControlsMap.DRIVE_STICK_CHANGE_SPEED_MULTIPLIER_TANK)>.1){
+        SPEED_MULTIPLIER = .8;
+      }
+      else {
+        SPEED_MULTIPLIER = 1;
+      }
+      /*
+      if(driveStick.getRawButton(5)){
+        backUsbCam.close();
+        frontUsbCam = frontCam.startAutomaticCapture("cam1",0);
+      }
+      if(driveStick.getRawButton(6)){
+        frontUsbCam.close();
+        backUsbCam = backCam.startAutomaticCapture("cam2",1);
+      }
+      */
+      /*
+      switch (m_driveSelected) {
+        
+        //Arcade
+        case kTankMode:
+        drive.tankDrive(-driveStick.getRawAxis(1) * SPEED_MULTIPLIER, -driveStick.getRawAxis(5) * SPEED_MULTIPLIER);
+  
+        if (driveStick.getRawAxis(ControlsMap.DRIVE_STICK_CHANGE_SPEED_MULTIPLIER_TANK)>.1){
+          SPEED_MULTIPLIER = 1;
+        }
+        else {
+          SPEED_MULTIPLIER = .65;
+        }
+        break;
+        
+        //Tank
+        case kGTAMode:
+  
+        if(driveStick.getRawAxis(ControlsMap.DRIVE_STICK_BACKWARDS) > .1){
+          drive.curvatureDrive(driveStick.getRawAxis(ControlsMap.DRIVE_STICK_BACKWARDS), driveStick.getRawAxis(ControlsMap.DRIVE_STICK_STEERING), false);
+        }
+        else if(driveStick.getRawAxis(ControlsMap.DRIVE_STICK_FORWARDS) > .1){
+          drive.curvatureDrive(driveStick.getRawAxis(-ControlsMap.DRIVE_STICK_FORWARDS),driveStick.getRawAxis(ControlsMap.DRIVE_STICK_STEERING),false);
+        }
+        else{
+          drive.curvatureDrive(0, driveStick.getRawAxis(ControlsMap.DRIVE_STICK_STEERING), true);
+        }
+  
+        if (driveStick.getRawButton(ControlsMap.DRIVE_STICK_CHANGE_SPEED_MULTIPLIER_GTA)){
+          SPEED_MULTIPLIER = 1;
+        }
+        else {
+          SPEED_MULTIPLIER = .65;
+        }
+        break;
+        
+        default:
+        break;
+         }
+  
+         */
+    if ((opStick.getRawAxis(ControlsMap.OP_STICK_ARM)) > .3 ||
+      (opStick.getRawAxis(ControlsMap.OP_STICK_ARM)) < -0.3){
+      arm.set(-opStick.getRawAxis(ControlsMap.OP_STICK_ARM)*0.55);
+    }
+    else{
+      arm.set(0);
+    }
+  
+    if(opStick.getRawButton(ControlsMap.OP_STICK_ARM_PISTON)){
+     hatchSully.set(DoubleSolenoid.Value.kForward);
+    }
+    else {
+      hatchSully.set(DoubleSolenoid.Value.kReverse);
+    }
+    
+  
+    
+    if(opStick.getRawButton(ControlsMap.OP_STICK_SHOOTY_WHEEL_INTAKE)){
+      ball.set(1);
+    }
+    else if(opStick.getRawButton(ControlsMap.OP_STICK_SHOOTY_WHEEL_OUTTAKE)){
+      ball.set(-1);
+  
+    }
+    else{
+      ball.set(0.1);
+    }
+  
+    }
+    catch(Exception e){
+      e.printStackTrace();
+    }
+   
+
     //unused
+    /*
     switch (m_autoSelected) {
       case kCustomAuto:
         // Put custom auto code here
@@ -232,9 +358,13 @@ public class Robot extends TimedRobot {
         // Put default auto code here
         break;
     }
+    */
+    
   }
   @Override
   public void teleopInit() {
+
+    m_driveSelected = m_driveChooser.getSelected();
     //unused, for vision
     /*
     if (visionPort == null) return;
@@ -248,6 +378,10 @@ public class Robot extends TimedRobot {
   
   @Override
   public void teleopPeriodic() {
+    updateRobot();
+    
+
+    //updateRobot();
     /*
     if (visionPort == null) return;
     if (visionPort.getBytesReceived() > 0) {
@@ -275,6 +409,7 @@ public class Robot extends TimedRobot {
     SmartDashboard.putNumber("ultraLeft Distance",ultraLeftDistance);
 
     //ultrasonic sensor movement
+    /*
     if (driveStick.getRawButton(ControlsMap.DRIVE_STICK_ALLIGN)) {
       if (ultraLeftDistance > ultraRightDistance){
         drive.tankDrive(1 * 0.5f, ultraRightDistance / ultraLeftDistance * 0.5f);
@@ -286,15 +421,10 @@ public class Robot extends TimedRobot {
     else{
       drive.tankDrive(-1 * driveStick.getRawAxis(ControlsMap.DRIVE_STICK_ALLIGN) * 0.5f, -1 * driveStick.getRawAxis(5) * 0.5f, true);
     }
+    */
     
 
-    //speed limiter
-    if (driveStick.getRawButton(ControlsMap.DRIVE_STICK_CHANGE_SPEED_MULTIPLIER)){
-      SPEED_MULTIPLIER = 1;
-    }
-    else {
-      SPEED_MULTIPLIER = .6;
-    }
+   
     /*
     //GTA Drive (GTA = Grand Theft Auto, for dumb peoplelike MATEO PARRADO who don't know)
     if (driveStick.getRawAxis(ControlsMap.DRIVE_STICK_FORWARDS) > .1){ 
@@ -331,43 +461,34 @@ public class Robot extends TimedRobot {
       drive.tankDrive(0, 0);
       
     }
+    
     */
-    if(driveStick.getRawAxis(4) > .1){
-      drive.curvatureDrive(driveStick.getRawAxis(4), driveStick.getRawAxis(0), false);
+   /*
+    if(driveStick.getRawAxis(ControlsMap.DRIVE_STICK_BACKWARDS) > .1){
+      drive.curvatureDrive(driveStick.getRawAxis(ControlsMap.DRIVE_STICK_BACKWARDS), driveStick.getRawAxis(ControlsMap.DRIVE_STICK_STEERING), false);
     }
-    else if(driveStick.getRawAxis(3) > .1){
-      drive.curvatureDrive(-driveStick.getRawAxis(3), driveStick.getRawAxis(0), false);
+    else if(driveStick.getRawAxis(ControlsMap.DRIVE_STICK_FORWARDS) > .1){
+      drive.curvatureDrive(driveStick.getRawAxis(-ControlsMap.DRIVE_STICK_FORWARDS),driveStick.getRawAxis(ControlsMap.DRIVE_STICK_STEERING),false);
     }
     else{
-      drive.curvatureDrive(0, driveStick.getRawAxis(0), true);
+      drive.curvatureDrive(0, driveStick.getRawAxis(ControlsMap.DRIVE_STICK_STEERING), true);
     }
-    //drive.tankDrive(driveStick.getRawAxis(1), driveStick.getRawAxis(5));
+    
+   */
     //drive.tankDrive(1, 1);
 
     //controls the back scissor lift wheel  motor 
    
-    if (opStick.getRawButton(ControlsMap.OP_STICK_MOVE_SCISSOR_WHEELS)){
-      wheelMotors.set(1);
-    }
-    else {
-      wheelMotors.set(0);
-    }
-    
 
     //if scissor lift is dropped, shoot both forwards
-    if(opStick.getRawButton(ControlsMap.OP_STICK_LOWER_SCISSOR_LIFT)){
-      frontScissorSully.set(DoubleSolenoid.Value.kForward);
-      backScissorSully.set(DoubleSolenoid.Value.kForward);
-    }//raise first piston
-    else if (opStick.getRawButton(ControlsMap.OP_STICK_RAISE_FRONT_SCISSOR)){
-      frontScissorSully.set(DoubleSolenoid.Value.kReverse);
-    }//raise second piston
-    else if (opStick.getRawButton(ControlsMap.OP_STICK_RAISE_BACK_SCISSOR)){
-      backScissorSully.set(DoubleSolenoid.Value.kReverse);
-    }
+    
+    
+    
     
     // controls hatch moving in and out with just one button
+    /*
     if (opStick.getRawButton(ControlsMap.OP_STICK_ARM_PISTON) && hatchStatus){
+      
       hatchController = !hatchController;
       hatchStatus = false;
       if (hatchController == true){
@@ -379,33 +500,37 @@ public class Robot extends TimedRobot {
     }
     else if(!opStick.getRawButton(ControlsMap.OP_STICK_ARM_PISTON)){
       hatchStatus = true;
+      hatchSully.set(DoubleSolenoid.Value.kReverse);
+
+    }*/
+  
+    
+  /*
+    if (opStick.getRawButton(ControlsMap.OP_STICK_ARM_PISTON) && hatchStatus){
+      hatchStatus = false;
+      hatchSully.set(DoubleSolenoid.Value.kForward);
+    }
+    else if(opStick.getRawButton(10)){
+      hatchSully.set(DoubleSolenoid.Value.kReverse);
+    }
+    else if(!opStick.getRawButton(ControlsMap.OP_STICK_ARM_PISTON)){
       hatchSully.set(DoubleSolenoid.Value.kOff);
     }
-
-    //intake and release balls
-    if(opStick.getRawButton(ControlsMap.OP_STICK_SHOOTY_WHEEL_INTAKE)){
-      ball.set(1);
+    */
+    
+    /*
+    if (opStick.getRawButton(ControlsMap.OP_STICK_ARM_PISTON)&& !hasHatch){
+      hatchSully.set(DoubleSolenoid.Value.kForward);
+      hasHatch = true;
     }
-    else if(opStick.getRawButton(ControlsMap.OP_STICK_SHOOTY_WHEEL_OUTTAKE)){
-      ball.set(-1);
-
+    else if(opStick.getRawButton(ControlsMap.OP_STICK_ARM_PISTON)&& hasHatch){
+      hatchSully.set(DoubleSolenoid.Value.kReverse);
+      hasHatch = false;
     }
-    else{
-      ball.set(0);
-    }
+    */
+  
+   
 
-  // move arm forwards or backwards
-  if ((opStick.getRawAxis(ControlsMap.OP_STICK_ARM)) > .1 || ((opStick.getRawAxis(ControlsMap.OP_STICK_ARM)) < -0.1 )){
-      arm.set(opStick.getRawAxis(ControlsMap.OP_STICK_ARM));
-  }
-  else{
-    arm.set(0);
-  }
-
-  if(opStick.getRawButton(ControlsMap.OP_STICK_MOVE_SCISSOR_WHEELS)){
-    scissorOne.set(1);
-    scissorTwo.set(1);
-  }
   /*
     if(opStick.getRawButton(ControlsMap.OP_STICK_MOVE_ARM_FOR_HATCH)){
       //BACKWARDS
@@ -514,5 +639,151 @@ public class Robot extends TimedRobot {
         arm.set(0.5);
       }
     }
+  }
+  public void updateRobot(){
+    try{
+      if(driveStick.getRawAxis(1)<0){
+        LEFT_SIGN_MULTIPLIER = 1;
+      }
+      else{
+        LEFT_SIGN_MULTIPLIER = -1;
+      }
+
+      if(driveStick.getRawAxis(5)<0){
+        RIGHT_SIGN_MULTIPLIER = 1;
+      }
+      else{
+        RIGHT_SIGN_MULTIPLIER = -1;
+      }
+
+      drive.tankDrive(Math.pow((driveStick.getRawAxis(1)),4) * SPEED_MULTIPLIER * LEFT_SIGN_MULTIPLIER, Math.pow((driveStick.getRawAxis(5)),4)  * SPEED_MULTIPLIER * RIGHT_SIGN_MULTIPLIER);
+
+      if (driveStick.getRawAxis(ControlsMap.DRIVE_STICK_CHANGE_SPEED_MULTIPLIER_TANK)>.1){
+        SPEED_MULTIPLIER = .7;
+      }
+      else {
+        SPEED_MULTIPLIER = 1;
+      }
+      /*
+      if(driveStick.getRawButton(5)){
+        backUsbCam.close();
+        frontUsbCam = frontCam.startAutomaticCapture("cam1",0);
+      }
+      if(driveStick.getRawButton(6)){
+        frontUsbCam.close();
+        backUsbCam = backCam.startAutomaticCapture("cam2",1);
+      }
+      */
+      /*
+      switch (m_driveSelected) {
+        
+        //Arcade
+        case kTankMode:
+        drive.tankDrive(-driveStick.getRawAxis(1) * SPEED_MULTIPLIER, -driveStick.getRawAxis(5) * SPEED_MULTIPLIER);
+  
+        if (driveStick.getRawAxis(ControlsMap.DRIVE_STICK_CHANGE_SPEED_MULTIPLIER_TANK)>.1){
+          SPEED_MULTIPLIER = 1;
+        }
+        else {
+          SPEED_MULTIPLIER = .65;
+        }
+        break;
+        
+        //Tank
+        case kGTAMode:
+  
+        if(driveStick.getRawAxis(ControlsMap.DRIVE_STICK_BACKWARDS) > .1){
+          drive.curvatureDrive(driveStick.getRawAxis(ControlsMap.DRIVE_STICK_BACKWARDS), driveStick.getRawAxis(ControlsMap.DRIVE_STICK_STEERING), false);
+        }
+        else if(driveStick.getRawAxis(ControlsMap.DRIVE_STICK_FORWARDS) > .1){
+          drive.curvatureDrive(driveStick.getRawAxis(-ControlsMap.DRIVE_STICK_FORWARDS),driveStick.getRawAxis(ControlsMap.DRIVE_STICK_STEERING),false);
+        }
+        else{
+          drive.curvatureDrive(0, driveStick.getRawAxis(ControlsMap.DRIVE_STICK_STEERING), true);
+        }
+  
+        if (driveStick.getRawButton(ControlsMap.DRIVE_STICK_CHANGE_SPEED_MULTIPLIER_GTA)){
+          SPEED_MULTIPLIER = 1;
+        }
+        else {
+          SPEED_MULTIPLIER = .65;
+        }
+        break;
+        
+        default:
+        break;
+         }
+         */
+            /*
+      if (((opStick.getRawAxis(ControlsMap.OP_STICK_ARM)) > .3 && !frontLimitSwitch.get() && !backLimitSwitch.get())
+      || ((opStick.getRawAxis(ControlsMap.OP_STICK_ARM)) < -0.3  && !frontLimitSwitch.get() && !backLimitSwitch.get())){
+          arm.set(-opStick.getRawAxis(ControlsMap.OP_STICK_ARM)*0.5);
+      }
+      */
+  
+      if ((opStick.getRawAxis(ControlsMap.OP_STICK_ARM)) > .3 ||
+        (opStick.getRawAxis(ControlsMap.OP_STICK_ARM)) < -0.3){
+          arm.set(-opStick.getRawAxis(ControlsMap.OP_STICK_ARM)*0.55);
+      }
+      else{
+        arm.set(0);
+      }
+  
+      if(opStick.getRawButton(ControlsMap.OP_STICK_ARM_PISTON)){
+       hatchSully.set(DoubleSolenoid.Value.kForward);
+      }
+      else {
+        hatchSully.set(DoubleSolenoid.Value.kReverse);
+      }
+      
+  
+      
+      if(opStick.getRawButton(ControlsMap.OP_STICK_SHOOTY_WHEEL_INTAKE)){
+        ball.set(1);
+      }
+      else if(opStick.getRawButton(ControlsMap.OP_STICK_SHOOTY_WHEEL_OUTTAKE)){
+        ball.set(-1);
+  
+      }
+      else{
+        ball.set(0.1);
+      }
+        
+      if(opStick.getRawButton(ControlsMap.OP_STICK_LOWER_FRONT_SCISSOR)){
+        frontScissorSully.set(DoubleSolenoid.Value.kForward);
+      }
+      else if(opStick.getRawButton(ControlsMap.OP_STICK_LOWER_BACK_SCISSOR)){
+        backScissorSully.set(DoubleSolenoid.Value.kForward);
+      }
+      
+      if(opStick.getRawButton(ControlsMap.OP_STICK_LOWER_SCISSOR_LIFT)){
+        frontScissorSully.set(DoubleSolenoid.Value.kForward);
+        backScissorSully.set(DoubleSolenoid.Value.kForward);
+    
+      }//raise first piston
+      else if (opStick.getRawButton(ControlsMap.OP_STICK_RAISE_FRONT_SCISSOR)){
+        frontScissorSully.set(DoubleSolenoid.Value.kReverse);
+      }//raise second piston
+      else if (opStick.getRawButton(ControlsMap.OP_STICK_RAISE_BACK_SCISSOR)){
+        backScissorSully.set(DoubleSolenoid.Value.kReverse);
+      }
+
+      
+    if (opStick.getRawButton(ControlsMap.OP_STICK_MOVE_SCISSOR_WHEELS)){
+      wheel1.set(1);
+      wheel2.set(-1);
+
+    }
+    else {
+      wheelMotors.set(0);
+    }
+    
+  
+    }
+    catch(Exception e){
+      e.printStackTrace();
+    }
+  
+   
   }
 }
